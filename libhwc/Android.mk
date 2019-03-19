@@ -27,6 +27,8 @@ ifeq ($(BOARD_DYNAMIC_RECOMPOSITION_DISABLED), true)
 	LOCAL_CFLAGS += -DDYNAMIC_RECOMPOSITION_DISABLED
 endif
 
+LOCAL_CFLAGS += -DSUPPORTS_DOZE_POWER_MODES
+
 ifeq ($(BOARD_USES_FIMC), true)
         LOCAL_SHARED_LIBRARIES += libexynosfimc
 else
@@ -88,7 +90,7 @@ endif
 # old kernel APIs for calling it (S3C_FB_*).
 # Newer SoCs (Exynos 7420 onwards) make use of a new kernel API.
 # WARNING: Support is highly experimental!
-ifneq ($(filter exynos7420 exynos7580 exynos7880 exynos8890, $(TARGET_SOC)),)
+ifneq ($(filter exynos3475 exynos7420 exynos7580 exynos7880 exynos8890, $(TARGET_SOC)),)
 	LOCAL_CFLAGS += -DDECON_FB
 endif
 
@@ -112,7 +114,7 @@ LOCAL_C_INCLUDES += \
 
 LOCAL_ADDITIONAL_DEPENDENCIES := \
 	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
-
+	#INSTALLED_KERNEL_HEADERS
 LOCAL_SRC_FILES := ExynosHWC.cpp
 
 LOCAL_MODULE := hwcomposer.$(TARGET_BOARD_PLATFORM)

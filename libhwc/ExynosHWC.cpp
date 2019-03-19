@@ -13,8 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 #if defined(USES_CEC)
 #include "libcec.h"
 #endif
@@ -251,7 +249,7 @@ int exynos5_prepare(hwc_composer_device_1_t *dev,
     pdev->updateCallCnt++;
     pdev->update_event_cnt++;
     pdev->LastUpdateTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
-//    pdev->primaryDisplay->getCompModeSwitch();
+    pdev->primaryDisplay->getCompModeSwitch();
 
     pdev->totPixels = 0;
 
@@ -562,6 +560,40 @@ void *hwc_vsync_thread(void *data)
     return NULL;
 }
 
+#ifdef SUPPORTS_DOZE_POWER_MODES
+static int exynos5_setDozeMode(struct hwc_composer_device_1 *dev, int disp, int mode)
+{
+    struct exynos5_hwc_composer_device_1_t *pdev =
+            (struct exynos5_hwc_composer_device_1_t *)dev;
+    //int decon_mode; // clang doesn't allow using <enum decon_doze_mode>
+    __u32 decon_mode;
+    if (mode == HWC_POWER_MODE_DOZE)
+        decon_mode = DECON_POWER_MODE_DOZE;
+    else if (mode == HWC_POWER_MODE_DOZE_SUSPEND)
+        decon_mode = DECON_POWER_MODE_DOZE_SUSPEND;
+    else
+        return -EINVAL; // WTF?
+
+    int err = ioctl(pdev->primaryDisplay->mDisplayFd, S3CFB_POWER_MODE, &decon_mode);
+    if (err < 0) {
+        if (decon_mode == DECON_POWER_MODE_DOZE_SUSPEND && errno == EEXIST) {
+            ALOGI("S3CFB_POWER_MODE ioctl failed for mode %d: display already dozing", mode);
+        }
+        else if (errno == ENOTTY) {
+            ALOGE("S3CFB_POWER_MODE ioctl failed for mode %d: decon doesn't support DOZE(_SUSPEND)", mode,
+                    strerror(errno), errno);
+        }
+        else {
+            ALOGE("S3CFB_POWER_MODE ioctl failed for mode %d: %s (%d)", mode,
+                    strerror(errno), errno);
+        }
+        return -errno;
+    }
+
+    return 0;
+}
+#endif
+
 int exynos5_setPowerMode(struct hwc_composer_device_1 *dev, int disp, int mode)
 {
     struct exynos5_hwc_composer_device_1_t *pdev =
@@ -579,9 +611,14 @@ int exynos5_setPowerMode(struct hwc_composer_device_1 *dev, int disp, int mode)
         break;
     case HWC_POWER_MODE_DOZE:
     case HWC_POWER_MODE_DOZE_SUSPEND:
+#ifdef SUPPORTS_DOZE_POWER_MODES
+        // give special treatment to doze-modes
+        return exynos5_setDozeMode(dev, disp, mode);
+#else
         // FIXME: As specified in Exynos framebuffer driver, this will return -EINVAL.
         fb_blank = FB_BLANK_VSYNC_SUSPEND;
         break;
+#endif
     case HWC_POWER_MODE_NORMAL:
         fb_blank = FB_BLANK_UNBLANK;
         break;
@@ -1049,24 +1086,24 @@ int exynos5_open(const struct hw_module_t *module, const char *name,
         dev->mCecFd = -1;
 #endif
 
-//    ret = pthread_create(&dev->vsync_thread, NULL, hwc_vsync_thread, dev);
-//    if (ret) {
-//        ALOGE("failed to start vsync thread: %s", strerror(ret));
-//        ret = -ret;
-//        goto err_vsync;
-//    }
+    ret = pthread_create(&dev->vsync_thread, NULL, hwc_vsync_thread, dev);
+    if (ret) {
+        ALOGE("failed to start vsync thread: %s", strerror(ret));
+        ret = -ret;
+        goto err_vsync;
+    }
 
-//    dev->update_stat_thread_flag = true;
-//    ret = pthread_create(&dev->update_stat_thread, NULL, hwc_update_stat_thread, dev);
-//    if (ret) {
-//        ALOGE("failed to start update_stat thread: %s", strerror(ret));
-//        ret = -ret;
-//        goto err_vsync;
-//    }
+    dev->update_stat_thread_flag = true;
+    ret = pthread_create(&dev->update_stat_thread, NULL, hwc_update_stat_thread, dev);
+    if (ret) {
+        ALOGE("failed to start update_stat thread: %s", strerror(ret));
+        ret = -ret;
+        goto err_vsync;
+    }
 
     dev->hwc_ctrl.max_num_ovly = NUM_HW_WINDOWS;
     dev->hwc_ctrl.num_of_video_ovly = 2;
-    dev->hwc_ctrl.dynamic_recomp_mode = false;//(dev->psrMode == PSR_NONE);
+    dev->hwc_ctrl.dynamic_recomp_mode = (dev->psrMode == PSR_NONE);
     dev->hwc_ctrl.skip_static_layer_mode = true;
     dev->hwc_ctrl.dma_bw_balance_mode = true;
 

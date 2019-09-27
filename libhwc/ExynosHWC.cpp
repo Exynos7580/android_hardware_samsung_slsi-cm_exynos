@@ -960,12 +960,12 @@ int exynos5_open(const struct hw_module_t *module, const char *name,
           dev->primaryDisplay->mXres, dev->primaryDisplay->mYres, info.width, dev->primaryDisplay->mXdpi / 1000.0,
           info.height, dev->primaryDisplay->mYdpi / 1000.0, refreshRate);
 #ifdef FIMD_BW_OVERLAP_CHECK
-    fimd_bw_overlap_limits_init(dev->primaryDisplay->mXres, dev->primaryDisplay->mYres,
-                    dev->primaryDisplay->mDmaChannelMaxBandwidth, dev->primaryDisplay->mDmaChannelMaxOverlapCount);
+    fimd_bw_overlap_limits_init(lcd_xres, lcd_yres,
+                    dev->mDmaChannelMaxBandwidth, dev->mDmaChannelMaxOverlapCount);
 #else
     for (size_t i = 0; i < MAX_NUM_FIMD_DMA_CH; i++) {
-        dev->primaryDisplay->mDmaChannelMaxBandwidth[i] =2560 * 1600;
-        dev->primaryDisplay->mDmaChannelMaxOverlapCount[i] = 1;
+        dev->mDmaChannelMaxBandwidth[i] =2560 * 1600;
+        dev->mDmaChannelMaxOverlapCount[i] = 1;
     }
 #endif
 
@@ -1103,7 +1103,7 @@ int exynos5_open(const struct hw_module_t *module, const char *name,
 
     dev->hwc_ctrl.max_num_ovly = NUM_HW_WINDOWS;
     dev->hwc_ctrl.num_of_video_ovly = 2;
-    dev->hwc_ctrl.dynamic_recomp_mode = (dev->psrMode == PSR_NONE);
+    dev->hwc_ctrl.dynamic_recomp_mode = false;//(dev->psrMode == PSR_NONE);
     dev->hwc_ctrl.skip_static_layer_mode = true;
     dev->hwc_ctrl.dma_bw_balance_mode = true;
 

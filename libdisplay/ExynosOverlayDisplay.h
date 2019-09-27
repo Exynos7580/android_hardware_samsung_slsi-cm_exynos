@@ -1,3 +1,5 @@
+//#define LOG_NDEBUG 0
+
 #ifndef EXYNOS_PRIMARY_DISPLAY_H
 #define EXYNOS_PRIMARY_DISPLAY_H
 
@@ -26,6 +28,7 @@ class ExynosOverlayDisplay : public ExynosDisplay {
         virtual void handleTotalBandwidthOverload(hwc_display_contents_1_t *contents);
 
         int getCompModeSwitch();
+        int checkConfigChanged(fb_win_config *config1, fb_win_config *config2);
         int32_t getDisplayAttributes(const uint32_t attribute);
 
         /* Fields */
@@ -73,7 +76,7 @@ class ExynosOverlayDisplay : public ExynosDisplay {
         /* Methods */
         void configureOtfWindow(hwc_rect_t &displayFrame,
                 int32_t blending, int32_t planeAlpha, int format, fb_win_config &cfg);
-        void configureHandle(private_handle_t *handle, hwc_frect_t &sourceCrop,
+        void configureHandle(private_handle_t *handle,hwc_layer_1_t *layer,  hwc_frect_t &sourceCrop,
                 hwc_rect_t &displayFrame, int32_t blending, int32_t planeAlpha, int fence_fd, fb_win_config &cfg,
                 int32_t win_idx);
         int clearDisplay();
@@ -88,12 +91,9 @@ class ExynosOverlayDisplay : public ExynosDisplay {
         void cleanupGscs();
 
         virtual int postGscM2M(hwc_layer_1_t &layer, fb_win_config *config, int win_map, int index);
-        virtual void forceYuvLayersToFb(hwc_display_contents_1_t *contents);
         virtual void configureOverlay(hwc_layer_1_t *layer, fb_win_config &cfg, int32_t win_idx);
         virtual bool isOverlaySupported(hwc_layer_1_t &layer, size_t i);
         virtual int postFrame(hwc_display_contents_1_t *contents);
-        virtual int waitForRenderFinish(buffer_handle_t *handle, int buffers);
-        virtual void handleOffscreenRendering(hwc_layer_1_t &layer);
         virtual int getMPPForUHD(hwc_layer_1_t &layer);
 };
 

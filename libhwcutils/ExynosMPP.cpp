@@ -106,7 +106,19 @@ bool ExynosMPP::formatRequiresGsc(int format)
 
 int ExynosMPP::getDownscaleRatio(int xres, int yres)
 {
-    return 0;
+
+    if (((xres == 720) || (xres == 640)) && (yres == 480))
+        return 4;
+    else if ((xres == 1280) && (yres == 720))
+        return 4;
+    else if ((xres == 1280) && (yres == 800))
+        return 3;
+    else if ((xres == 1920) && (yres == 1080))
+        return 2;
+    else if ((xres == 800) && (yres == 1280))
+        return 2;
+    else
+        return 1;
 }
 
 bool ExynosMPP::isFormatSupportedByGscOtf(int format)

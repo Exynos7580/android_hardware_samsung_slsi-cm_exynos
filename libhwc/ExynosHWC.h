@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+//#define LOG_NDEBUG 0
+
 #ifndef ANDROID_EXYNOS_HWC_H_
 #define ANDROID_EXYNOS_HWC_H_
 #include <errno.h>
@@ -92,7 +94,7 @@ const size_t NUM_HW_WINDOWS = SOC_NUM_HW_WINDOWS;
 const size_t NO_FB_NEEDED = NUM_HW_WINDOWS + 1;
 #ifndef FIMD_BW_OVERLAP_CHECK
 const size_t MAX_NUM_FIMD_DMA_CH = 2;
-const int FIMD_DMA_CH_IDX[NUM_HW_WINDOWS] = {0, 1, 1, 1, 0};
+const int FIMD_DMA_CH_IDX[] = {0, 1, 0};
 #endif
 
 #define MAX_DEV_NAME 128
@@ -112,8 +114,7 @@ const int FIMD_DMA_CH_IDX[NUM_HW_WINDOWS] = {0, 1, 1, 1, 0};
 #endif
 #endif
 
-const size_t NUM_GSC_UNITS = sizeof(AVAILABLE_GSC_UNITS) /
-        sizeof(AVAILABLE_GSC_UNITS[0]);
+const size_t NUM_GSC_UNITS = 2;
 const size_t BURSTLEN_BYTES = FIMD_BURSTLEN * FIMD_WORD_SIZE_BYTES + FIMD_ADDED_BURSTLEN_BYTES;
 const size_t NUM_HDMI_BUFFERS = 3;
 
@@ -170,7 +171,7 @@ struct exynos5_hwc_post_data_t {
     size_t              fb_window;
 };
 
-const size_t NUM_GSC_DST_BUFS = 4;
+const size_t NUM_GSC_DST_BUFS = 3;
 struct exynos5_gsc_data_t {
     void            *gsc;
     exynos_mpp_img  src_cfg;
@@ -223,6 +224,9 @@ struct exynos5_hwc_composer_device_1_t {
     const hwc_procs_t       *procs;
     pthread_t               vsync_thread;
     int                     force_gpu;
+
+    uint32_t                 mDmaChannelMaxBandwidth[MAX_NUM_FIMD_DMA_CH];
+    uint32_t                 mDmaChannelMaxOverlapCount[MAX_NUM_FIMD_DMA_CH];
 
     bool hdmi_hpd;
 

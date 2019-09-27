@@ -4,6 +4,51 @@
 #include "ExynosHWCUtils.h"
 #include "ExynosMPPModule.h"
 
+int ExynosOverlayDisplay::checkConfigChanged(fb_win_config *config1, fb_win_config *config2) {
+    int i = 0;
+
+    fb_win_config cfg1;
+    fb_win_config cfg2;
+
+    while (1) {
+    	cfg1 = config1[i];
+    	cfg2 = config2[i];
+    	if (cfg1.state != cfg2.state)
+		break;
+    	if (cfg1.fd_idma != cfg2.fd_idma)
+		break;
+    	if (cfg1.fence_fd != cfg2.fence_fd)
+		break;
+    	if (cfg1.plane_alpha != cfg2.plane_alpha)
+		break;
+    	if (cfg1.dst.w != cfg2.dst.w)
+		break;
+    	if (cfg1.dst.h != cfg2.dst.h)
+		break;
+    	if (cfg1.dst.f_w != cfg2.dst.f_w)
+		break;
+    	if (cfg1.dst.f_h != cfg2.dst.f_h)
+		break;
+    	if (cfg1.src.w != cfg2.src.w)
+		break;
+    	if (cfg1.src.h != cfg2.src.h)
+		break;
+    	if (cfg1.src.f_w != cfg2.src.f_w)
+		break;
+    	if (cfg1.src.f_h != cfg2.src.f_h)
+		break;
+    	if (cfg1.vpp_parm.addr[0] != cfg2.vpp_parm.addr[0])
+		break;
+    	if (cfg1.format != cfg2.format)
+		break;
+    	if (cfg1.idma_type != cfg2.idma_type)
+		break;
+    	i++;
+    	if (i > 7)
+    		return 0;
+    }
+    return 1;
+}
 
 ExynosOverlayDisplay::ExynosOverlayDisplay(int numMPPs, struct exynos5_hwc_composer_device_1_t *pdev) :
     ExynosDisplay(numMPPs)
@@ -33,8 +78,10 @@ bool ExynosOverlayDisplay::isOverlaySupported(hwc_layer_1_t &layer, size_t i)
         return false;
     }
 
-    if (!layer.planeAlpha)
+    if (!layer.planeAlpha) {
+	ALOGV("\tlayer %u: no planeAlpha !!", i);
         return false;
+    }
 
     private_handle_t *handle = private_handle_t::dynamicCast(layer.handle);
 
@@ -61,8 +108,8 @@ bool ExynosOverlayDisplay::isOverlaySupported(hwc_layer_1_t &layer, size_t i)
     if (mMPPs[mMPPIndex]->isProcessingRequired(layer, handle->format)) {
         int down_ratio = mMPPs[mMPPIndex]->getDownscaleRatio(this->mXres, this->mYres);
         /* Check whether GSC can handle using local or M2M */
-        if (!((mMPPs[mMPPIndex]->isProcessingSupported(layer, handle->format, false, down_ratio)) ||
-            (mMPPs[mMPPIndex]->isProcessingSupported(layer, handle->format, true, down_ratio)))) {
+        if (!mMPPs[mMPPIndex]->isProcessingSupported(layer, handle->format, false, down_ratio)) {
+            //(mMPPs[mMPPIndex]->isProcessingSupported(layer, handle->format, true, down_ratio)))) {
             ALOGV("\tlayer %u: gscaler required but not supported", i);
             return false;
         }
@@ -76,6 +123,7 @@ bool ExynosOverlayDisplay::isOverlaySupported(hwc_layer_1_t &layer, size_t i)
     if ((layer.blending != HWC_BLENDING_NONE) &&
             mMPPs[mMPPIndex]->isFormatSupportedByGsc(handle->format) &&
             !isFormatRgb(handle->format)) {
+	ALOGV("\tlayer %u: blending %d not supported by GSC!! or format not RGB", i, layer.blending);
         return false;
     }
 
@@ -84,7 +132,7 @@ bool ExynosOverlayDisplay::isOverlaySupported(hwc_layer_1_t &layer, size_t i)
         return false;
     }
     if (CC_UNLIKELY(isOffscreen(layer, mXres, mYres))) {
-        ALOGW("\tlayer %u: off-screen", i);
+        ALOGV("\tlayer %u: off-screen", i);
         return false;
     }
 
@@ -103,20 +151,10 @@ int ExynosOverlayDisplay::prepare(hwc_display_contents_1_t* contents)
     mConfigMode = 0;
     mRetry = false;
 
-    /*
-     * check whether same config or different config,
-     * should be waited until meeting the NUM_COFIG)STABLE
-     * before stablizing config, should be composed by GPU
-     * faster stablizing config, should be returned by OVERLAY
-     */
-    forceYuvLayersToFb(contents);
-
-    do {
-        determineYuvOverlay(contents);
-        determineSupportedOverlays(contents);
-        determineBandwidthSupport(contents);
-        assignWindows(contents);
-    } while (mRetry);
+    determineYuvOverlay(contents);
+    determineSupportedOverlays(contents);
+    determineBandwidthSupport(contents);
+    assignWindows(contents);
 
     if (mPopupPlayYuvContents)
         mVirtualOverlayFlag = 0;
@@ -158,7 +196,7 @@ void ExynosOverlayDisplay::configureOtfWindow(hwc_rect_t &displayFrame,
 }
 #endif
 
-void ExynosOverlayDisplay::configureHandle(private_handle_t *handle,
+void ExynosOverlayDisplay::configureHandle(private_handle_t *handle, hwc_layer_1_t *layer,
         hwc_frect_t &sourceCrop, hwc_rect_t &displayFrame,
         int32_t blending, int32_t planeAlpha, int fence_fd, fb_win_config &cfg,
         int32_t win_idx)
@@ -167,78 +205,81 @@ void ExynosOverlayDisplay::configureHandle(private_handle_t *handle,
     uint32_t w = WIDTH(displayFrame);
     uint32_t h = HEIGHT(displayFrame);
     uint8_t bpp = formatToBpp(handle->format);
-    uint32_t offset = ((uint32_t)sourceCrop.top * handle->stride + (uint32_t)sourceCrop.left) * bpp / 8;
+    unsigned int crop = 0;
+    unsigned int fl = (int)sourceCrop.left;
+    unsigned int ft = (int)sourceCrop.top;
+
 
     if (displayFrame.left < 0) {
-        unsigned int crop = -displayFrame.left;
+        crop = -displayFrame.left;
         ALOGV("layer off left side of screen; cropping %u pixels from left edge",
                 crop);
         x = 0;
         w -= crop;
-        offset += crop * bpp / 8;
     } else {
         x = displayFrame.left;
     }
 
     if (displayFrame.right > this->mXres) {
-        unsigned int crop = displayFrame.right - this->mXres;
+        crop = displayFrame.right - this->mXres;
         ALOGV("layer off right side of screen; cropping %u pixels from right edge",
                 crop);
         w -= crop;
     }
 
     if (displayFrame.top < 0) {
-        unsigned int crop = -displayFrame.top;
+        crop = -displayFrame.top;
         ALOGV("layer off top side of screen; cropping %u pixels from top edge",
                 crop);
         y = 0;
         h -= crop;
-        offset += handle->stride * crop * bpp / 8;
     } else {
         y = displayFrame.top;
     }
 
     if (displayFrame.bottom > this->mYres) {
-        int crop = displayFrame.bottom - this->mYres;
+        crop = displayFrame.bottom - this->mYres;
         ALOGV("layer off bottom side of screen; cropping %u pixels from bottom edge",
                 crop);
         h -= crop;
     }
 
-#ifdef DECON_FB
     cfg.state = cfg.DECON_WIN_STATE_BUFFER;
+    cfg.idma_type = getIdmaType(win_idx);
     cfg.fd_idma[0] = handle->fd;
     cfg.fd_idma[1] = handle->fd1;
     cfg.fd_idma[2] = handle->fd2;
-    cfg.idma_type = getIdmaType(win_idx);
-    if (isVppType(cfg.idma_type)) {
-        // TODO: Configure vpp_parm
-        // cfg.vpp_parm.rot = ?
-        // check MPP isRotated() val?
-        ALOGE("%s: overlay is VPP type, but we cannot handle this!", __func__);
-    }
     cfg.dst.x = x;
     cfg.dst.y = y;
     cfg.dst.w = w;
     cfg.dst.h = h;
-    cfg.dst.f_w = handle->stride;
-    cfg.dst.f_h = handle->vstride;
-    cfg.src.x = x;
-    cfg.src.y = y;
-    cfg.src.w = w;
-    cfg.src.h = h;
+    cfg.dst.f_w = this->mXres;
+    cfg.dst.f_h = this->mYres;
     cfg.src.f_w = handle->stride;
     cfg.src.f_h = handle->vstride;
-#else
-    cfg.state = cfg.S3C_FB_WIN_STATE_BUFFER;
-    cfg.fd = handle->fd;
-    cfg.x = x;
-    cfg.y = y;
-    cfg.w = w;
-    cfg.h = h;
-    cfg.offset = offset;
-    cfg.stride = handle->stride * bpp / 8;
-#endif
+
+
+    if (sourceCrop.left < 0) {
+	fl = 0;
+    	cfg.src.x = 0;
+    }
+    else
+    	cfg.src.x = (int)sourceCrop.left;
+    if (sourceCrop.top < 0){
+	ft = 0;
+        cfg.src.y = 0;
+    }
+    else
+        cfg.src.y = (int)sourceCrop.top;
+
+    cfg.src.w = (int)(sourceCrop.left-fl+sourceCrop.right);
+    if ((int)(sourceCrop.left+sourceCrop.right) > cfg.src.f_w)
+    	cfg.src.w = (int)(cfg.src.f_w - fl);
+
+    cfg.src.h = (int)(sourceCrop.top-ft+sourceCrop.bottom);
+    if ((int)(sourceCrop.top+sourceCrop.bottom) > cfg.src.f_h)
+        cfg.src.h = (int)(cfg.src.f_h - ft);
+
     cfg.format = halFormatToSocFormat(handle->format);
     cfg.blending = halBlendingToSocBlending(blending);
     cfg.fence_fd = fence_fd;
@@ -246,6 +287,7 @@ void ExynosOverlayDisplay::configureHandle(private_handle_t *handle,
     if (planeAlpha && (planeAlpha < 255)) {
         cfg.plane_alpha = planeAlpha;
     }
+
 }
 
 void ExynosOverlayDisplay::configureOverlay(hwc_layer_1_t *layer, fb_win_config &cfg,
@@ -284,7 +326,7 @@ void ExynosOverlayDisplay::configureOverlay(hwc_layer_1_t *layer, fb_win_config 
         layer->acquireFenceFd = -1;
     }
     private_handle_t *handle = private_handle_t::dynamicCast(layer->handle);
-    configureHandle(handle, layer->sourceCropf, layer->displayFrame,
+    configureHandle(handle, layer, layer->sourceCropf, layer->displayFrame,
             layer->blending, layer->planeAlpha, layer->acquireFenceFd, cfg,
             win_idx);
 }
@@ -299,13 +341,12 @@ int ExynosOverlayDisplay::postFrame(hwc_display_contents_1_t* contents)
     int tot_ovly_wins = 0;
 
     memset(config, 0, sizeof(win_data.config));
-    for (size_t i = 0; i < NUM_HW_WINDOWS; i++)
-        config[i].fence_fd = -1;
-
     for (size_t i = 0; i < NUM_HW_WINDOWS; i++) {
-        if ( pdata->overlay_map[i] != -1)
-            tot_ovly_wins++;
+        config[i].fence_fd = -1;
+	if ( pdata->overlay_map[i] != -1)
+		tot_ovly_wins++;
     }
+
     if (mVirtualOverlayFlag)
         tot_ovly_wins++;
 
@@ -317,12 +358,7 @@ int ExynosOverlayDisplay::postFrame(hwc_display_contents_1_t* contents)
             if (pdata->gsc_map[i].mode == exynos5_gsc_map_t::GSC_M2M) {
                 if (postGscM2M(layer, config, win_map, i) < 0)
                     continue;
-            } else if (this->mOtfMode == OTF_RUNNING &&
-                    pdata->gsc_map[i].mode == exynos5_gsc_map_t::GSC_LOCAL) {
-                if (postGscOtf(layer, config, win_map, i) < 0)
-                    continue;
             } else {
-                waitForRenderFinish(&layer.handle, 1);
                 configureOverlay(&layer, config[win_map], i);
             }
         }
@@ -339,14 +375,18 @@ int ExynosOverlayDisplay::postFrame(hwc_display_contents_1_t* contents)
         handleStaticLayers(contents, win_data, tot_ovly_wins);
     }
 
-    int ret = ioctl(this->mDisplayFd, S3CFB_WIN_CONFIG, &win_data);
-    for (size_t i = 0; i < NUM_HW_WINDOWS; i++)
-        if (config[i].fence_fd != -1)
-            close(config[i].fence_fd);
-    if (ret < 0) {
-        ALOGE("ioctl S3CFB_WIN_CONFIG failed: %s", strerror(errno));
-        return ret;
+
+    if (checkConfigChanged(win_data.config, mLastConfig)) {
+    	int ret = ioctl(this->mDisplayFd, S3CFB_WIN_CONFIG, &win_data);
+    	for (size_t i = 0; i < NUM_HW_WINDOWS; i++)
+        	if (config[i].fence_fd != -1)
+            	close(config[i].fence_fd);
+    	if (ret < 0) {
+        	ALOGE("ioctl S3CFB_WIN_CONFIG failed: %s", strerror(errno));
+        	return ret;
+    	}
     }
+
     if (contents->numHwLayers == 1) {
         hwc_layer_1_t &layer = contents->hwLayers[0];
         if (layer.acquireFenceFd >= 0)
@@ -393,15 +433,9 @@ int ExynosOverlayDisplay::set(hwc_display_contents_1_t* contents)
     int err = 0;
 
     if (this->mPostData.fb_window != NO_FB_NEEDED) {
-        for (size_t i = 0; i < contents->numHwLayers; i++) {
-            if (contents->hwLayers[i].compositionType ==
-                    HWC_FRAMEBUFFER_TARGET) {
-                this->mPostData.overlay_map[this->mPostData.fb_window] = i;
-                fb_layer = &contents->hwLayers[i];
-                break;
-            }
-        }
 
+        this->mPostData.overlay_map[this->mPostData.fb_window] = contents->numHwLayers - 1; //FB_TARGET always last layer.
+        fb_layer = &contents->hwLayers[contents->numHwLayers - 1];
         if (CC_UNLIKELY(!fb_layer)) {
             ALOGE("framebuffer target expected, but not provided");
             err = -EINVAL;
@@ -623,14 +657,6 @@ void ExynosOverlayDisplay::skipStaticLayers(hwc_display_contents_1_t* contents)
     return;
 }
 
-void ExynosOverlayDisplay::forceYuvLayersToFb(hwc_display_contents_1_t *contents)
-{
-}
-
-void ExynosOverlayDisplay::handleOffscreenRendering(hwc_layer_1_t &layer)
-{
-}
-
 void ExynosOverlayDisplay::determineYuvOverlay(hwc_display_contents_1_t *contents)
 {
     mPopupPlayYuvContents = false;
@@ -645,15 +671,15 @@ void ExynosOverlayDisplay::determineYuvOverlay(hwc_display_contents_1_t *content
             if (getDrmMode(handle->flags) != NO_DRM) {
                 this->mHasDrmSurface = true;
                 mForceOverlayLayerIndex = i;
+		ALOGV("\tlayer %u: has DRM flag - mHasDrmSurface = true", i);
             }
 
             /* check yuv surface */
             if (mMPPs[0]->formatRequiresGsc(handle->format) && isOverlaySupported(contents->hwLayers[i], i)) {
                 this->mYuvLayers++;
                 mForceOverlayLayerIndex = i;
+		ALOGV("\tlayer %u: format requieres GSC! mYuvLayers = %d format = %d", i,this->mYuvLayers, handle->format);
             }
-
-            handleOffscreenRendering(layer);
         }
     }
     mPopupPlayYuvContents = !!((mYuvLayers == 1) && (mForceOverlayLayerIndex > 0));
@@ -699,15 +725,11 @@ void ExynosOverlayDisplay::determineSupportedOverlays(hwc_display_contents_1_t *
                     mHwc->mS3DMode = S3D_MODE_RUNNING;
             }
 
-                if ((!mPopupPlayYuvContents)
-                        || ((uint32_t)mForceOverlayLayerIndex == i)) {
-                if ((!mHasCropSurface || mPopupPlayYuvContents) ||
-                    ((mHasDrmSurface) && ((uint32_t)mForceOverlayLayerIndex == i))) {
+                if ((!mPopupPlayYuvContents) || ((uint32_t)mForceOverlayLayerIndex == i)) {
+
+                if ((!mHasCropSurface || mPopupPlayYuvContents) || ((mHasDrmSurface) && ((uint32_t)mForceOverlayLayerIndex == i))) {
                     mHwc->totPixels += WIDTH(layer.displayFrame) * HEIGHT(layer.displayFrame);
-                    if (isOverlaySupported(contents->hwLayers[i], i) &&
-                            !mForceFb && (!mHwc->hwc_ctrl.dynamic_recomp_mode ||
-                            ((mHwc->CompModeSwitch != HWC_2_GLES) ||
-                            (getDrmMode(handle->flags) != NO_DRM)))) {
+                    if (isOverlaySupported(contents->hwLayers[i], i) && !mForceFb ) {
                         ALOGV("\tlayer %u: overlay supported", i);
                         layer.compositionType = HWC_OVERLAY;
                         if (mPopupPlayYuvContents)
@@ -718,6 +740,7 @@ void ExynosOverlayDisplay::determineSupportedOverlays(hwc_display_contents_1_t *
                 }
             }
         }
+
 
         if (!mFbNeeded) {
             mFirstFb = i;
@@ -813,7 +836,8 @@ void ExynosOverlayDisplay::determineBandwidthSupport(hwc_display_contents_1_t *c
 
             bool can_compose = windows_left && (win_idx < NUM_HW_WINDOWS) &&
                             ((pixel_used[dma_ch_idx] + pixels_needed) <=
-                            (uint32_t)this->mDmaChannelMaxBandwidth[dma_ch_idx]);
+                            mHwc->mDmaChannelMaxBandwidth[dma_ch_idx]);
+
             int gsc_index = getMPPForUHD(layer);
 
             bool gsc_required = mMPPs[gsc_index]->isProcessingRequired(layer, handle->format);
@@ -830,7 +854,7 @@ void ExynosOverlayDisplay::determineBandwidthSupport(hwc_display_contents_1_t *c
             visible_rect.right--; visible_rect.bottom--;
 
             if (can_compose) {
-                switch (this->mDmaChannelMaxOverlapCount[dma_ch_idx]) {
+                switch (mHwc->mDmaChannelMaxOverlapCount[dma_ch_idx]) {
                 case 1: // It means, no layer overlap is allowed
                     for (size_t j = 0; j < rects[dma_ch_idx].size(); j++)
                          if (intersect(visible_rect, rects[dma_ch_idx].itemAt(j)))
@@ -905,21 +929,6 @@ void ExynosOverlayDisplay::assignWindows(hwc_display_contents_1_t *contents)
             }
         }
 
-        if (layer.handle) {
-            private_handle_t *handle = private_handle_t::dynamicCast(layer.handle);
-            if (ExynosMPP::isFormatSupportedByGscOtf(handle->format)) {
-                /* in case of changing compostiontype form GSC to FRAMEBUFFER for yuv layer */
-                if ((mConfigMode == 1) && (layer.compositionType == HWC_FRAMEBUFFER)) {
-                    mForceFbYuvLayer = 1;
-                    mConfigMode = 0;
-                    mCountSameConfig = 0;
-                    /* for prepare */
-                    mForceFb = 1;
-                    mRetry = true;
-                    return;
-                }
-            }
-        }
         if (layer.compositionType != HWC_FRAMEBUFFER &&
                 layer.compositionType != HWC_FRAMEBUFFER_TARGET) {
             ALOGV("assigning layer %u to window %u", i, nextWindow);
@@ -995,11 +1004,6 @@ bool ExynosOverlayDisplay::assignGscLayer(hwc_layer_1_t &layer, int index, int n
     return ret;
 }
 
-int ExynosOverlayDisplay::waitForRenderFinish(buffer_handle_t *handle, int buffers)
-{
-    return 0;
-}
-
 int ExynosOverlayDisplay::postGscM2M(hwc_layer_1_t &layer, fb_win_config *config, int win_map, int index)
 {
     exynos5_hwc_post_data_t *pdata = &mPostData;
@@ -1019,8 +1023,6 @@ int ExynosOverlayDisplay::postGscM2M(hwc_layer_1_t &layer, fb_win_config *config
         mMPPs[gsc_idx]->mS3DMode = S3D_NONE;
     }
 
-    if (isFormatRgb(handle->format))
-        waitForRenderFinish(&layer.handle, 1);
     /* OFF_Screen to ON_Screen changes */
     if (getDrmMode(handle->flags) == SECURE_DRM)
         recalculateDisplayFrame(layer, mXres, mYres);
@@ -1037,7 +1039,7 @@ int ExynosOverlayDisplay::postGscM2M(hwc_layer_1_t &layer, fb_win_config *config
     private_handle_t *dst_handle =
             private_handle_t::dynamicCast(dst_buf);
     int fence = mMPPs[gsc_idx]->mDstConfig.releaseFenceFd;
-    configureHandle(dst_handle, sourceCrop,
+    configureHandle(dst_handle, &layer, sourceCrop,
             layer.displayFrame, layer.blending, layer.planeAlpha,  fence,
             config[win_map], index);
     return 0;
@@ -1105,6 +1107,7 @@ int ExynosOverlayDisplay::getMPPForUHD(hwc_layer_1_t &layer)
 void ExynosOverlayDisplay::cleanupGscs()
 {
     if (mMPPs[FIMD_GSC_IDX]->isM2M()) {
+
         mMPPs[FIMD_GSC_IDX]->cleanupM2M();
         mMPPs[FIMD_GSC_IDX]->setMode(exynos5_gsc_map_t::GSC_NONE);
     } else if (mMPPs[FIMD_GSC_IDX]->isOTF()) {

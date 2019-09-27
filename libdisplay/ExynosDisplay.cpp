@@ -11,8 +11,6 @@ ExynosDisplay::~ExynosDisplay()
 int ExynosDisplay::getDeconWinMap(int overlayIndex, int totalOverlays)
 {
 
-    if (totalOverlays == 4 && overlayIndex == 3)
-        return 4;
     return overlayIndex;
 }
 

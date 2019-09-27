@@ -15,7 +15,9 @@ class ExynosMPP {
 
         static bool isSrcConfigChanged(exynos_mpp_img &c1, exynos_mpp_img &c2);
         bool isFormatSupportedByGsc(int format);
+
         bool formatRequiresGsc(int format);
+
         static bool isFormatSupportedByGscOtf(int format);
 
         virtual bool rotationSupported(bool rotation);
